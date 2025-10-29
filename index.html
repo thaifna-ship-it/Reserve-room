@@ -164,20 +164,70 @@ async function fetchBookings(){
   }catch{return[]}
 }
 
-function isConflict(rows,{date,start,end,room}){
-  return rows.some(r=>r.date===date&&r.room===room&&!(end<=r.start||start>=r.end));
+// แปลงเวลาเป็นนาที (รองรับทั้ง "9:00" และ "09:00")
+function toMinutes(t) {
+  if (!t) return NaN;
+  const [h, m='0'] = String(t).trim().split(':');
+  return parseInt(h,10)*60 + parseInt(m,10);
 }
 
+// ตรวจชนเวลาแบบเป๊ะ ด้วยการเทียบช่วงนาที
+function isConflict(rows, {date, start, end, room}) {
+  const s0 = toMinutes(start);
+  const e0 = toMinutes(end);
+  return rows.some(r => {
+    if ((r.date||'').trim() !== (date||'').trim()) return false;
+    if ((r.room||'').trim().toLowerCase() !== (room||'').trim().toLowerCase()) return false;
+    const s1 = toMinutes(r.start);
+    const e1 = toMinutes(r.end);
+    if (isNaN(s1) || isNaN(e1)) return false;
+    // ทับช่วง = ชน
+    return !(e0 <= s1 || s0 >= e1);
+  });
+}
+// เทียบสตริงแบบไม่แคร์ช่องว่าง/ตัวพิมพ์
+function eqStr(a,b){ return String(a||'').trim().toLowerCase() === String(b||'').trim().toLowerCase(); }
+
+// ค้นหาแถวที่เพิ่งจอง โดยเทียบแบบยืดหยุ่น (เวลาคิดเป็นนาที)
+function findJustBooked(rows, payload){
+  const s0 = toMinutes(payload.start);
+  const e0 = toMinutes(payload.end);
+  return rows.find(r =>
+    eqStr(r.date, payload.date) &&
+    eqStr(r.room, payload.room) &&
+    eqStr(r.company, payload.company) &&
+    eqStr(r.requester, payload.requester) &&
+    toMinutes(r.start) === s0 &&
+    toMinutes(r.end) === e0
+  );
+}
+
+// ส่งจอง และยืนยันผลด้วย GET + retry (กันดีเลย์ชีต/CORS)
 async function createBooking(payload){
   try{
-    const r=await fetch(ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},
-    body:JSON.stringify({action:'create',...payload})});
-    const j=await r.json().catch(()=>null);
-    if(j&&j.ok===false)throw Object.assign(new Error(j.message),{code:j.code});
-  }catch{}
-  const rows=await fetchBookings();
-  if(rows.find(r=>r.date===payload.date&&r.start===payload.start&&r.end===payload.end&&r.room===payload.room))
-    return{ok:true};
+    const r = await fetch(ENDPOINT, {
+      method:'POST',
+      headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action:'create', ...payload })
+    });
+    const j = await r.json().catch(()=>null);
+    if (j && j.ok === false) {
+      const e = new Error(j.message || 'บันทึกไม่สำเร็จ');
+      e.code = j.code;
+      throw e;
+    }
+  }catch{
+    // ถ้าอ่าน response ไม่ได้ (CORS) จะมาเข้า catch — ยังไม่ถือว่าล้มเหลว
+  }
+
+  // Retry ดึงชีต 3 ครั้ง (เว้น 400ms) เพื่อรอแถวใหม่โผล่แน่ ๆ
+  for (let i=0;i<3;i++){
+    const rows = await fetchBookings();
+    const found = findJustBooked(rows, payload);
+    if (found) return { ok:true, id: found.id || null };
+    await new Promise(r => setTimeout(r, 400));
+  }
+
   throw new Error('ไม่สามารถยืนยันการจองได้');
 }
 
@@ -236,7 +286,9 @@ $('#bookingForm').onsubmit=async e=>{
   t=I18N[currentLang],
   D=Object.fromEntries(new FormData(e.target).entries());
   f.className='msg';f.textContent='';
-  if(!D.start||!D.end||D.start>=D.end){f.textContent=t.errorEnd;f.classList.add('err');return}
+  if (!D.start || !D.end || toMinutes(D.start) >= toMinutes(D.end)) {
+  f.textContent = t.errorEnd; f.classList.add('err'); return;
+}
   const rows=await fetchBookings();
   if(isConflict(rows,{date:D.date,start:D.start,end:D.end,room:D.room})){
     f.textContent=t.conflictNow;f.classList.add('err');return
