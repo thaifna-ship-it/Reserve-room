@@ -281,9 +281,8 @@
     headers:{'Content-Type':'text/plain;charset=utf-8'},
     body: JSON.stringify({ action:'create', ...payload })
   });
-  // Apps Script Web App มักคืน 200 เสมอ → ต้องดูเนื้อหา JSON
-  const j = await res.json();
-  if (j && j.ok === false) {
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok || j.ok === false) {
     const e = new Error(j.message || 'บันทึกไม่สำเร็จ'); e.code = j.code; throw e;
   }
   return j; // {ok:true, id}
