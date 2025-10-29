@@ -22,8 +22,6 @@
       --muted:#64748b; --primary:#16a34a; --danger:#dc2626; --dayred:#fee2e2;
       --input-bg:#ffffff; --btn-ghost-bg:#f8fafc;
       --shadow: 0 6px 20px rgba(0,0,0,.06);
-      <!-- ต่อจากปุ่ม Light -->
-<button type="button" id="btnPing" class="chip">Test API</button>
     }
 
     html,body{margin:0;background:var(--bg);color:var(--fg);font-family:ui-sans-serif,system-ui,"Segoe UI",Roboto,Arial}
@@ -271,23 +269,62 @@
     }
 
     async function fetchBookings(){
-      const url = ENDPOINT + '?action=list&_=' + Date.now();
-      const res = await fetch(url, { method:'GET' });
-      if(!res.ok) throw new Error('โหลดรายการไม่สำเร็จ');
-      return await res.json();
-    }
-
-   async function createBooking(payload){
-  const res = await fetch(ENDPOINT, {
-    method:'POST',
-    headers:{'Content-Type':'text/plain;charset=utf-8'},
-    body: JSON.stringify({ action:'create', ...payload })
-  });
-  const j = await res.json().catch(() => ({}));
-  if (!res.ok || j.ok === false) {
-    const e = new Error(j.message || 'บันทึกไม่สำเร็จ'); e.code = j.code; throw e;
+  const url = ENDPOINT + '?action=list&_=' + Date.now();
+  try {
+    const res = await fetch(url, { method:'GET' });
+    if(!res.ok) return [];
+    return await res.json();
+  } catch {
+    return []; // ถ้า fetch ล้มเหลว ให้ถือว่าไม่มีข้อมูล (กันเว็บล้ม)
+    // ตรวจชนเวลาแบบ client-side
+function isConflict(existing, {date, start, end, room}) {
+  return existing.some(r =>
+    r.date === date &&
+    r.room === room &&
+    !(end <= r.start || start >= r.end) // true = ชนเวลา
+  );
+}
   }
-  return j; // {ok:true, id}
+}
+
+   // ส่งแบบ text/plain ลดโอกาส preflight; และยืนยันผลด้วย GET
+async function createBooking(payload){
+  let posted = false;
+  try {
+    const res = await fetch(ENDPOINT, {
+      method:'POST',
+      headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action:'create', ...payload })
+    });
+    if (res.ok) {
+      const j = await res.json().catch(()=>null);
+      if (j && j.ok === false) {
+        const e = new Error(j.message || 'บันทึกไม่สำเร็จ'); e.code = j.code; throw e;
+      }
+      posted = true;
+    }
+  } catch (_) {
+    // ถ้าอ่าน response ไม่ได้ (CORS) จะเข้ามาที่นี่ แต่อาจ POST สำเร็จอยู่แล้ว
+  }
+
+  // ยืนยันผลด้วย GET ว่ามีแถวที่เพิ่งจองโผล่จริงไหม
+  try {
+    const rows = await fetchBookings();
+    const found = rows.find(r =>
+      r.date === payload.date &&
+      r.start === payload.start &&
+      r.end === payload.end &&
+      r.room === payload.room &&
+      (r.company || '') === (payload.company || '') &&
+      (r.requester || '').trim().toLowerCase() === (payload.requester || '').trim().toLowerCase()
+    );
+    if (found) {
+      return { ok:true, id: found.id || null };
+    }
+  } catch (_) { /* เงียบไว้ */ }
+
+  const e = new Error('ไม่สามารถยืนยันการจองได้ (เครือข่ายหรือสิทธิ์การเข้าถึง)'); e.code = 500;
+  throw e;
 }
 
     let calendar;
@@ -340,39 +377,64 @@
     document.getElementById('btnCancel').addEventListener('click', closeModal);
 
     document.getElementById('bookingForm').addEventListener('submit', async (e)=>{
-      e.preventDefault();
-      const t = I18N[currentLang];
-      const msg = document.getElementById('formMsg');
-      msg.className = 'msg'; msg.textContent = '';
+  e.preventDefault();
+  const t = I18N[currentLang];
+  const msg = document.getElementById('formMsg');
+  msg.className = 'msg'; msg.textContent = '';
 
-      const data = Object.fromEntries(new FormData(e.target).entries());
-      if(!data.start || !data.end || data.start >= data.end){
-        msg.textContent = t.errorEnd; msg.classList.add('err'); return;
-      }
-      if(!ENDPOINT){
-        msg.textContent = t.needEP; msg.classList.add('err'); return;
-      }
+  const data = Object.fromEntries(new FormData(e.target).entries());
+  if(!data.start || !data.end || data.start >= data.end){
+    msg.textContent = t.errorEnd; msg.classList.add('err'); return;
+  }
+  if(!ENDPOINT){
+    msg.textContent = t.needEP; msg.classList.add('err'); return;
+  }
 
-      document.getElementById('btnSubmit').disabled = true;
-      try{
-        await createBooking({
-          requester: data.requester.trim(),
-          company:   data.company,
-          date:      data.date,
-          start:     data.start,
-          end:       data.end,
-          room:      data.room
-        });
-        msg.textContent = t.success; msg.classList.add('ok');
-        await calendar.refetchEvents();
-        setTimeout(()=>{ closeModal(); }, 600);
-      }catch(err){
-        msg.textContent = (err.code === 409) ? (t.booked + err.message) : (t.error + err.message);
-        msg.classList.add('err');
-      }finally{
-        document.getElementById('btnSubmit').disabled = false;
-      }
+  document.getElementById('btnSubmit').disabled = true;
+  try{
+    // 1) โหลดรายการล่าสุดมาตรวจชนก่อน
+    const rows = await fetchBookings();
+    const conflict = isConflict(rows, {
+      date: data.date,
+      start: data.start,
+      end: data.end,
+      room: data.room
     });
+
+    if (conflict) {
+      // ขึ้นข้อความแดง และไม่ส่ง POST
+      msg.textContent = (currentLang === 'ja')
+        ? '予約済みの時間帯です'
+        : 'ช่วงเวลานี้ถูกจองแล้ว';
+      msg.classList.add('err');
+      await calendar.refetchEvents();
+      return;
+    }
+
+    // 2) ไม่ชน → ส่ง POST
+    await createBooking({
+      requester: data.requester.trim(),
+      company:   data.company,
+      date:      data.date,
+      start:     data.start,
+      end:       data.end,
+      room:      data.room
+    });
+
+    // 3) แสดงผลสำเร็จ และรีเฟรชปฏิทิน
+    msg.textContent = t.success; msg.classList.add('ok');
+    await calendar.refetchEvents();
+    setTimeout(()=>{ closeModal(); }, 600);
+
+  }catch(err){
+    msg.textContent = (err.code === 409)
+      ? (t.booked + (err.message || 'เวลานี้ถูกจองไปแล้ว'))
+      : (t.error + (err.message || 'ไม่สามารถเชื่อมต่อได้'));
+    msg.classList.add('err');
+  }finally{
+    document.getElementById('btnSubmit').disabled = false;
+  }
+});
   </script>
 </body>
 </html>
