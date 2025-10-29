@@ -275,22 +275,19 @@
       return await res.json();
     }
 
-    async function createBooking(payload){
-      const res = await fetch(ENDPOINT, {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ action:'create', ...payload })
-      });
-      if(res.status === 409){
-        const j = await res.json().catch(()=>({message:'ช่วงเวลานี้ถูกจองไปแล้ว'}));
-        const e = new Error(j.message || 'ช่วงเวลานี้ถูกจองไปแล้ว'); e.code = 409; throw e;
-      }
-      if(!res.ok){
-        const t = await res.text().catch(()=>res.statusText);
-        throw new Error(t || 'บันทึกไม่สำเร็จ');
-      }
-      return await res.json();
-    }
+   async function createBooking(payload){
+  const res = await fetch(ENDPOINT, {
+    method:'POST',
+    headers:{'Content-Type':'text/plain;charset=utf-8'},
+    body: JSON.stringify({ action:'create', ...payload })
+  });
+  // Apps Script Web App มักคืน 200 เสมอ → ต้องดูเนื้อหา JSON
+  const j = await res.json();
+  if (j && j.ok === false) {
+    const e = new Error(j.message || 'บันทึกไม่สำเร็จ'); e.code = j.code; throw e;
+  }
+  return j; // {ok:true, id}
+}
 
     let calendar;
     document.addEventListener('DOMContentLoaded', async () => {
