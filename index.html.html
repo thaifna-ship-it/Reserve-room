@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="th" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>จองห้องประชุม</title>
+
+  <!-- FullCalendar -->
+  <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js"></script>
+
+  <style>
+    /* Theme variables */
+    :root{
+      --bg:#0b1220; --panel:#0f172a; --border:#223047; --fg:#e5e7eb;
+      --muted:#94a3b8; --primary:#22c55e; --danger:#ef4444; --dayred:#fee2e2;
+      --input-bg:#0b1220; --btn-ghost-bg:#0b1220;
+      --shadow: 0 6px 20px rgba(0,0,0,.25);
+    }
+    [data-theme="light"]{
+      --bg:#f6f7fb; --panel:#ffffff; --border:#e5e7eb; --fg:#0f172a;
+      --muted:#64748b; --primary:#16a34a; --danger:#dc2626; --dayred:#fee2e2;
+      --input-bg:#ffffff; --btn-ghost-bg:#f8fafc;
+      --shadow: 0 6px 20px rgba(0,0,0,.06);
+    }
+
+    html,body{margin:0;background:var(--bg);color:var(--fg);font-family:ui-sans-serif,system-ui,"Segoe UI",Roboto,Arial}
+    .wrap{max-width:1100px;margin:24px auto;padding:0 16px}
+    h1{margin:6px 0 12px;font-size:1.6rem}
+    .toolbar{display:flex;gap:8px;align-items:center;justify-content:space-between;margin-bottom:8px}
+    .right-tools{display:flex;gap:8px;align-items:center}
+    .chip{border:1px solid var(--border);background:var(--btn-ghost-bg);color:var(--fg);padding:6px 10px;border-radius:10px;cursor:pointer;box-shadow:var(--shadow)}
+    .chip.active{background:linear-gradient(90deg,#16a34a,#22c55e);color:#062d13;border:0}
+    .panel{background:linear-gradient(180deg,var(--panel),var(--bg));border:1px solid var(--border);border-radius:14px;padding:16px;box-shadow:var(--shadow)}
+    #calendar{background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:10px}
+    .fc .fc-daygrid-day.fc-day-today{background:rgba(34,197,94,.12)}
+    .legend{font-size:.9rem;color:var(--muted);margin:10px 0 0}
+    .legend i{display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--dayred);margin-right:6px;border:1px solid #fca5a5}
+
+    /* Modal */
+    .modal-backdrop{position:fixed;inset:0;background:#0008;display:none;align-items:center;justify-content:center;z-index:50}
+    .modal{width:560px;max-width:calc(100vw - 24px);background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:16px;box-shadow:var(--shadow)}
+    .modal h3{margin:4px 0 14px}
+    .modal, .modal * { box-sizing: border-box; }
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .grid .full{grid-column:1/-1}
+    label{display:block;font-size:.88rem;color:var(--muted);margin-bottom:6px}
+    input,select,button{width:100%;border-radius:10px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);padding:10px}
+    .row{display:flex;gap:10px;margin-top:12px}
+    .btn{cursor:pointer;font-weight:600}
+    .btn.primary{background:linear-gradient(90deg,#16a34a,#22c55e);color:#062d13;border:0}
+    .btn.ghost{background:var(--btn-ghost-bg)}
+    .msg{margin-top:8px;font-size:.9rem}
+    .msg.err{color:#ef4444}
+    .msg.ok{color:#16a34a}
+    @media (max-width: 560px) { .grid{grid-template-columns:1fr;} }
+    .modal{max-height:90vh;overflow:auto}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="panel">
+      <div class="toolbar">
+        <h1 id="titleText">ปฏิทินจองห้อง</h1>
+        <div class="right-tools">
+          <div class="lang-switch">
+            <button type="button" id="btnTH" class="chip active">TH</button>
+            <button type="button" id="btnJP" class="chip">JP</button>
+          </div>
+          <div class="theme-switch">
+            <button type="button" id="btnDark" class="chip active">Dark</button>
+            <button type="button" id="btnLight" class="chip">Light</button>
+          </div>
+        </div>
+      </div>
+      <div id="calendar"></div>
+      <div class="legend"><i></i> <span id="legendText">มีการจองในวันนั้น</span></div>
+    </div>
+  </div>
+
+  <!-- Modal -->
+  <div class="modal-backdrop" id="modalBackdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="bookingTitle">
+      <h3 id="bookingTitle">จองห้อง</h3>
+      <form id="bookingForm" autocomplete="off">
+        <div class="grid">
+          <div class="full">
+            <label id="labelCompany">Company</label>
+            <select name="company" required>
+              <option value="" disabled selected id="optChooseCompany">เลือกบริษัท</option>
+              <option>NCNA &amp; NC BIZ</option>
+              <option>S.I.Placement</option>
+              <option>Alberryasia</option>
+            </select>
+          </div>
+
+          <div>
+            <label id="labelRequester">Requester</label>
+            <input name="requester" placeholder="เช่น Wim / Cream" required>
+          </div>
+          <div>
+            <label id="labelDate">วันที่</label>
+            <input type="date" name="date" required>
+          </div>
+
+          <div>
+            <label id="labelStart">Start time</label>
+            <select name="start" id="startSel" required></select>
+          </div>
+          <div>
+            <label id="labelEnd">End time</label>
+            <select name="end" id="endSel" required></select>
+          </div>
+
+          <div class="full">
+            <label id="labelRoom">Room</label>
+            <select name="room" required>
+              <option value="" disabled selected id="optChooseRoom">เลือกห้อง</option>
+              <option>Room 1</option>
+              <option>Room 2</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="row">
+          <button type="button" class="btn ghost" id="btnCancel">ยกเลิก</button>
+          <button type="submit" class="btn primary" id="btnSubmit">จอง</button>
+        </div>
+        <div class="msg" id="formMsg"></div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    // === CONFIG ===
+    const ENDPOINT = "https://script.google.com/macros/s/AKfycbwqYgWnnPY1bp4L637w1HCdPXpdEARkTvI20iYkirionUm-HfbDj-2cUKFySdJz8SMNjQ/exec";
+
+    // ------------- Helpers -------------
+    const $ = (sel, el=document) => el.querySelector(sel);
+    function openModal(){ $('#modalBackdrop').style.display = 'flex'; }
+    function closeModal(){ $('#modalBackdrop').style.display = 'none'; $('#formMsg').textContent=''; $('#bookingForm').reset(); }
+    let currentLang = 'th'; // 'th' or 'ja'
+    function fmtTime(hm){
+      const [h,m]=hm.split(':');
+      // TH: 13.00  JP: 13:00
+      return currentLang==='ja' ? (h.padStart(2,'0')+':'+m.padStart(2,'0')) : (h.padStart(2,'0')+'.'+m.padStart(2,'0'));
+    }
+
+    // ------------- i18n text -------------
+    const I18N = {
+      th: {
+        title: 'ปฏิทินจองห้อง',
+        legend: 'มีการจองในวันนั้น',
+        modalTitle: 'จองห้อง',
+        company: 'Company',
+        chooseCompany: 'เลือกบริษัท',
+        requester: 'Requester',
+        date: 'วันที่',
+        start: 'เวลาเริ่ม',
+        end: 'เวลาสิ้นสุด',
+        room: 'Room',
+        chooseRoom: 'เลือกห้อง',
+        cancel: 'ยกเลิก',
+        submit: 'จอง',
+        errorEnd: 'เวลาสิ้นสุดต้องมากกว่าเวลาเริ่มต้น',
+        needEP: 'ยังไม่ได้ตั้งค่า ENDPOINT ของ Google Apps Script',
+        success: 'จองสำเร็จ ✓',
+        booked: 'จองแล้ว: ',
+        error: 'ผิดพลาด: '
+      },
+      ja: {
+        title: '会議室カレンダー',
+        legend: '該当日に予約あり',
+        modalTitle: '会議室を予約',
+        company: '会社',
+        chooseCompany: '会社を選択',
+        requester: '申請者',
+        date: '日付',
+        start: '開始時刻',
+        end: '終了時刻',
+        room: '会議室',
+        chooseRoom: '部屋を選択',
+        cancel: 'キャンセル',
+        submit: '予約',
+        errorEnd: '終了時刻は開始時刻より後にしてください',
+        needEP: 'Apps Script の ENDPOINT が未設定です',
+        success: '予約完了 ✓',
+        booked: '予約済み: ',
+        error: 'エラー: '
+      }
+    };
+
+    function applyLang(lang){
+      currentLang = lang;
+      const t = I18N[lang];
+      // Text UI
+      $('#titleText').textContent = t.title;
+      $('#legendText').textContent = t.legend;
+      $('#bookingTitle').textContent = t.modalTitle;
+      $('#labelCompany').textContent = t.company;
+      $('#optChooseCompany').textContent = t.chooseCompany;
+      $('#labelRequester').textContent = t.requester;
+      $('#labelDate').textContent = t.date;
+      $('#labelStart').textContent = t.start;
+      $('#labelEnd').textContent = t.end;
+      $('#labelRoom').textContent = t.room;
+      $('#optChooseRoom').textContent = t.chooseRoom;
+      $('#btnCancel').textContent = t.cancel;
+      $('#btnSubmit').textContent = t.submit;
+
+      // Calendar locale
+      const loc = (lang==='ja') ? 'ja' : 'th';
+      calendar.setOption('locale', loc);
+      calendar.setOption('slotLabelFormat', { hour: '2-digit', minute: '2-digit', hour12: false });
+      calendar.setOption('eventTimeFormat', { hour: '2-digit', minute: '2-digit', hour12: false });
+      calendar.refetchEvents();
+
+      // Active state
+      $('#btnTH').classList.toggle('active', lang==='th');
+      $('#btnJP').classList.toggle('active', lang==='ja');
+    }
+
+    // Theme handling
+    function applyTheme(theme){
+      document.documentElement.setAttribute('data-theme', theme);
+      localStorage.setItem('room_theme', theme);
+      $('#btnDark').classList.toggle('active', theme==='dark');
+      $('#btnLight').classList.toggle('active', theme==='light');
+    }
+
+    // Build options 00:00..23:30 every 30 min
+    function buildTimeOptions() {
+      const times = [];
+      for (let h=0; h<24; h++) {
+        for (let m=0; m<60; m+=30) {
+          const HH = String(h).padStart(2,'0');
+          const MM = String(m).padStart(2,'0');
+          times.push(HH+':'+MM);
+        }
+      }
+      const startSel = document.getElementById('startSel');
+      const endSel = document.getElementById('endSel');
+      [startSel, endSel].forEach(sel => {
+        sel.innerHTML = '';
+        times.forEach(t => {
+          const opt = document.createElement('option');
+          opt.value = t;
+          opt.textContent = t;
+          sel.appendChild(opt);
+        });
+      });
+    }
+
+    function buildEvents(bookings){
+      const textEvents = bookings.map(b=>{
+        return {
+          id: b.id || (b.date+'-'+b.room+'-'+b.start+'-'+b.end),
+          title: fmtTime(b.start)+'–'+fmtTime(b.end)+' ('+b.room+(b.company ? ' · '+b.company : '')+')',
+          start: b.date+'T'+b.start,
+          end: b.date+'T'+b.end,
+          allDay: false,
+          display: 'list-item',
+          color: '#ef4444'
+        }
+      });
+      const days = [...new Set(bookings.map(b=>b.date))];
+      const bgEvents = days.map(d=>({ start: d, end: d, allDay: true, display: 'background', backgroundColor: '#fee2e2' }));
+      return [...textEvents, ...bgEvents];
+    }
+
+    async function fetchBookings(){
+      const url = ENDPOINT + '?action=list&_=' + Date.now();
+      const res = await fetch(url, { method:'GET' });
+      if(!res.ok) throw new Error('โหลดรายการไม่สำเร็จ');
+      return await res.json();
+    }
+
+    async function createBooking(payload){
+      const res = await fetch(ENDPOINT, {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ action:'create', ...payload })
+      });
+      if(res.status === 409){
+        const j = await res.json().catch(()=>({message:'ช่วงเวลานี้ถูกจองไปแล้ว'}));
+        const e = new Error(j.message || 'ช่วงเวลานี้ถูกจองไปแล้ว'); e.code = 409; throw e;
+      }
+      if(!res.ok){
+        const t = await res.text().catch(()=>res.statusText);
+        throw new Error(t || 'บันทึกไม่สำเร็จ');
+      }
+      return await res.json();
+    }
+
+    let calendar;
+    document.addEventListener('DOMContentLoaded', async () => {
+      buildTimeOptions();
+      const calEl = document.getElementById('calendar');
+      calendar = new FullCalendar.Calendar(calEl, {
+        initialView: 'dayGridMonth',
+        locale: 'th',
+        firstDay: 0,
+        height: 'auto',
+        headerToolbar: {
+          left: 'prev,next today',
+          center: 'title',
+          right: 'dayGridMonth,timeGridWeek,listMonth'
+        },
+        slotLabelFormat: { hour: '2-digit', minute: '2-digit', hour12: false },
+        eventTimeFormat: { hour: '2-digit', minute: '2-digit', hour12: false },
+        dateClick: (info)=>{
+          openModal();
+          const f = $('#bookingForm');
+          f.date.value = info.dateStr;
+          $('#startSel').value = '09:00';
+          $('#endSel').value = '10:00';
+          f.company.value = '';
+          f.requester.focus();
+        },
+        events: async (info, success, failure)=>{
+          try{
+            const bookings = await fetchBookings();
+            success(buildEvents(bookings));
+          }catch(err){ failure(err); }
+        }
+      });
+      calendar.render();
+      calendar.on('datesSet', () => calendar.refetchEvents());
+
+      // language buttons
+      document.getElementById('btnTH').addEventListener('click', ()=>applyLang('th'));
+      document.getElementById('btnJP').addEventListener('click', ()=>applyLang('ja'));
+      applyLang('th');
+
+      // theme buttons + load last theme
+      const lastTheme = localStorage.getItem('room_theme') || 'dark';
+      applyTheme(lastTheme);
+      document.getElementById('btnDark').addEventListener('click', ()=>applyTheme('dark'));
+      document.getElementById('btnLight').addEventListener('click', ()=>applyTheme('light'));
+    });
+
+    document.getElementById('btnCancel').addEventListener('click', closeModal);
+
+    document.getElementById('bookingForm').addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const t = I18N[currentLang];
+      const msg = document.getElementById('formMsg');
+      msg.className = 'msg'; msg.textContent = '';
+
+      const data = Object.fromEntries(new FormData(e.target).entries());
+      if(!data.start || !data.end || data.start >= data.end){
+        msg.textContent = t.errorEnd; msg.classList.add('err'); return;
+      }
+      if(!ENDPOINT){
+        msg.textContent = t.needEP; msg.classList.add('err'); return;
+      }
+
+      document.getElementById('btnSubmit').disabled = true;
+      try{
+        await createBooking({
+          requester: data.requester.trim(),
+          company:   data.company,
+          date:      data.date,
+          start:     data.start,
+          end:       data.end,
+          room:      data.room
+        });
+        msg.textContent = t.success; msg.classList.add('ok');
+        await calendar.refetchEvents();
+        setTimeout(()=>{ closeModal(); }, 600);
+      }catch(err){
+        msg.textContent = (err.code === 409) ? (t.booked + err.message) : (t.error + err.message);
+        msg.classList.add('err');
+      }finally{
+        document.getElementById('btnSubmit').disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
