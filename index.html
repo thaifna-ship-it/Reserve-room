@@ -211,23 +211,28 @@ async function createBooking(payload){
       body: JSON.stringify({ action:'create', ...payload })
     });
     const j = await r.json().catch(()=>null);
-    if (j && j.ok === false) {
+
+    // ได้คำตอบชัดเจนจากเซิร์ฟเวอร์
+    if (j) {
+      if (j.ok) return { ok:true, id: j.id || null, eventId: j.eventId || null };
+      // มี code = ข้อผิดพลาดจากฝั่งเซิร์ฟเวอร์ → โยนกลับให้ UI ทันที
       const e = new Error(j.message || 'บันทึกไม่สำเร็จ');
       e.code = j.code;
       throw e;
     }
-  }catch{
-    // ถ้าอ่าน response ไม่ได้ (CORS) จะมาเข้า catch — ยังไม่ถือว่าล้มเหลว
+  }catch(e){
+    // ถ้าเป็น error จากเซิร์ฟเวอร์ (มี code) ไม่ต้องรีทราย
+    if (e && e.code) throw e;
+    // อื่นๆ (เช่น CORS/parse ไม่ได้) → ไปรีทรายด้วยการอ่านชีต
   }
 
-  // Retry ดึงชีต 3 ครั้ง (เว้น 400ms) เพื่อรอแถวใหม่โผล่แน่ ๆ
+  // กรณีอ่าน response ไม่ได้ → รีทรายดึงชีตยืนยันว่าแถวถูกเขียนจริง
   for (let i=0;i<3;i++){
     const rows = await fetchBookings();
     const found = findJustBooked(rows, payload);
     if (found) return { ok:true, id: found.id || null };
     await new Promise(r => setTimeout(r, 400));
   }
-
   throw new Error('ไม่สามารถยืนยันการจองได้');
 }
 
