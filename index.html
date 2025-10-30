@@ -191,7 +191,6 @@ function applyLang(l){
     calendar.updateSize();
   }
 }
-
 function openModal(){ $('#modalBackdrop').style.display='flex'; }
 function closeModal(){ $('#modalBackdrop').style.display='none'; }
 
@@ -238,7 +237,25 @@ document.addEventListener('DOMContentLoaded',async()=>{
     dateClick:i=>{openModal();$('#bookingForm').date.value=i.dateStr;}
   });
   calendar.render();
+// ผูกปุ่มยกเลิก + ปิดเมื่อคลิกนอกกล่อง + ปิดด้วย Esc
+document.addEventListener('DOMContentLoaded', () => {
+  const cancelBtn = document.getElementById('btnCancel');
+  const backdrop  = document.getElementById('modalBackdrop');
 
+  if (cancelBtn) {
+    cancelBtn.onclick = () => closeModal();
+  }
+
+  if (backdrop) {
+    backdrop.addEventListener('click', (e) => {
+      if (e.target === backdrop) closeModal(); // คลิกนอก modal เพื่อปิด
+    });
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeModal(); // กด Esc เพื่อปิด
+  });
+});
   applyLang('th'); // ภาษาเริ่มต้น
   await calendar.refetchEvents();
 });
