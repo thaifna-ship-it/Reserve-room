@@ -236,6 +236,30 @@ function buildEv(rows){
 }
 
 // ✅ เพิ่ม: เรนเดอร์รายการจองของวันนั้น
+  // ✅ เพิ่มฟังก์ชันแปลงเวลาให้แสดงเป็น HH:MM
+function viewTime(v){
+  if (typeof v === 'string' && v.includes('T')) {
+    const d = new Date(v);
+    if (!isNaN(d)) {
+      const hh = String(d.getHours()).padStart(2,'0');
+      const mm = String(d.getMinutes()).padStart(2,'0');
+      return `${hh}:${mm}`;
+    }
+  }
+  if (typeof v === 'number' && v >= 0 && v < 1) {
+    const mins = Math.round(v * 24 * 60);
+    const hh = String(Math.floor(mins/60)).padStart(2,'0');
+    const mm = String(mins % 60).padStart(2,'0');
+    return `${hh}:${mm}`;
+  }
+  const s = String(v || '').trim();
+  if (s.includes(':') || s.includes('.')) {
+    const sep = s.includes(':') ? ':' : '.';
+    const [hh, mm='0'] = s.split(sep);
+    return `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
+  }
+  return s;
+}
 function renderDayList(dateIso){
   const wrap = document.getElementById('dayBookings');
   const list = document.getElementById('dayList');
@@ -257,7 +281,7 @@ function renderDayList(dateIso){
   }else{
     list.innerHTML = rows.map(r => `
       <div style="border:1px solid var(--border);border-radius:10px;padding:8px;background:var(--panel)">
-        <strong>${r.start} - ${r.end}</strong> (${r.room})<br>
+        <strong>${viewTime(r.start)}-${viewTime(r.end)} (${r.room})</strong><br>
         <small>${r.company} - ${r.requester}</small>
       </div>
     `).join('');
