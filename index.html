@@ -52,6 +52,13 @@
       <div class="toolbar">
         <h1 id="titleText">ปฏิทินจองห้อง</h1>
         <div class="right-tools">
+          <!-- ตัวกรองห้อง -->
+          <select id="filterRoom" class="chip" style="padding:8px 12px">
+            <option value="">ห้องทั้งหมด</option>
+            <option>Room 1</option>
+            <option>Room 2</option>
+          </select>
+
           <div class="lang-switch">
             <button type="button" id="btnTH" class="chip active">TH</button>
             <button type="button" id="btnJP" class="chip">JP</button>
@@ -129,6 +136,7 @@
 const ENDPOINT = "https://script.google.com/macros/s/AKfycbwqYgWnnPY1bp4L637w1HCdPXpdEARkTvI20iYkirionUm-HfbDj-2cUKFySdJz8SMNjQ/exec";
 const $ = (s,el=document)=>el.querySelector(s);
 let currentLang='th';
+let autoTimer=null;
 
 ////////////////i18n////////////////
 const I18N={
@@ -147,13 +155,26 @@ const I18N={
 };
 
 ////////////////Theme////////////////
-function applyTheme(t){document.documentElement.setAttribute('data-theme',t);localStorage.setItem('room_theme',t);
-$('#btnDark').classList.toggle('active',t==='dark');$('#btnLight').classList.toggle('active',t==='light');}
+function applyTheme(t){
+  document.documentElement.setAttribute('data-theme',t);
+  localStorage.setItem('room_theme',t);
+  $('#btnDark').classList.toggle('active',t==='dark');
+  $('#btnLight').classList.toggle('active',t==='light');
+}
 
 ////////////////Helpers////////////////
-function fmtTime(hm){const[h,m]=hm.split(':'),p=h.padStart(2,'0'),q=m.padStart(2,'0');return currentLang==='ja'?(p+':'+q):(p+'.'+q);}
-function openModal(){$('#modalBackdrop').style.display='flex';}
-function closeModal(){$('#modalBackdrop').style.display='none';$('#formMsg').textContent='';$('#bookingForm').reset();}
+function fmtTime(hm){
+  const[h,m]=hm.split(':'),p=h.padStart(2,'0'),q=m.padStart(2,'0');
+  return currentLang==='ja'?(p+':'+q):(p+'.'+q); // TH แสดงเป็น 09.30 ตามตัวอย่างรูป
+}
+function openModal(){ $('#modalBackdrop').style.display='flex'; }
+function closeModal(){
+  $('#modalBackdrop').style.display='none';
+  $('#formMsg').textContent='';
+  $('#bookingForm').reset();
+  $('#btnSubmit').disabled=false;
+  $('#btnSubmit').textContent=I18N[currentLang].submit;
+}
 
 ////////////////Fetch////////////////
 async function fetchBookings(){
@@ -181,10 +202,10 @@ function isConflict(rows, {date, start, end, room}) {
     const s1 = toMinutes(r.start);
     const e1 = toMinutes(r.end);
     if (isNaN(s1) || isNaN(e1)) return false;
-    // ทับช่วง = ชน
     return !(e0 <= s1 || s0 >= e1);
   });
 }
+
 // เทียบสตริงแบบไม่แคร์ช่องว่าง/ตัวพิมพ์
 function eqStr(a,b){ return String(a||'').trim().toLowerCase() === String(b||'').trim().toLowerCase(); }
 
@@ -212,21 +233,16 @@ async function createBooking(payload){
     });
     const j = await r.json().catch(()=>null);
 
-    // ได้คำตอบชัดเจนจากเซิร์ฟเวอร์
     if (j) {
-      if (j.ok) return { ok:true, id: j.id || null, eventId: j.eventId || null };
-      // มี code = ข้อผิดพลาดจากฝั่งเซิร์ฟเวอร์ → โยนกลับให้ UI ทันที
+      if (j.ok) return { ok:true, id: j.id || null };
       const e = new Error(j.message || 'บันทึกไม่สำเร็จ');
       e.code = j.code;
       throw e;
     }
   }catch(e){
-    // ถ้าเป็น error จากเซิร์ฟเวอร์ (มี code) ไม่ต้องรีทราย
     if (e && e.code) throw e;
-    // อื่นๆ (เช่น CORS/parse ไม่ได้) → ไปรีทรายด้วยการอ่านชีต
   }
 
-  // กรณีอ่าน response ไม่ได้ → รีทรายดึงชีตยืนยันว่าแถวถูกเขียนจริง
   for (let i=0;i<3;i++){
     const rows = await fetchBookings();
     const found = findJustBooked(rows, payload);
@@ -238,29 +254,62 @@ async function createBooking(payload){
 
 ////////////////Calendar////////////////
 let calendar;
+let latestRows = [];
+let currentFilter = '';
+
 document.addEventListener('DOMContentLoaded', async()=>{
+  // สร้างรายการเวลาแบบทุก 30 นาที
   const tm=[];
   for(let h=0;h<24;h++)for(let m=0;m<60;m+=30)tm.push(`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`);
-  ['startSel','endSel'].forEach(id=>{const s=document.getElementById(id);s.innerHTML='';tm.forEach(t=>s.insertAdjacentHTML('beforeend',`<option>${t}</option>`));});
+  ['startSel','endSel'].forEach(id=>{
+    const s=document.getElementById(id);
+    s.innerHTML='';
+    tm.forEach(t=>s.insertAdjacentHTML('beforeend',`<option>${t}</option>`));
+  });
 
   calendar=new FullCalendar.Calendar($('#calendar'),{
     initialView:'dayGridMonth',locale:'th',firstDay:0,height:'auto',
     headerToolbar:{left:'prev,next today',center:'title',right:'dayGridMonth,timeGridWeek,listMonth'},
     dateClick:i=>{
-      openModal();const f=$('#bookingForm');
-      f.date.value=i.dateStr;$('#startSel').value='09:00';$('#endSel').value='10:00';
-      f.company.value='';f.requester.focus();
+      openModal();
+      const f=$('#bookingForm');
+      f.date.value=i.dateStr;
+      $('#startSel').value='09:00';$('#endSel').value='10:00';
+      f.company.value='';
+      f.requester.focus();
     },
-    events:async(_,s,f)=>{try{s([...buildEv(await fetchBookings())])}catch(e){f(e)}}
+    events:async(_,success,failure)=>{
+      try{
+        latestRows = await fetchBookings();
+        const filtered = currentFilter
+          ? latestRows.filter(r => eqStr(r.room, currentFilter))
+          : latestRows;
+        success(buildEv(filtered));
+      }catch(e){ failure(e) }
+    }
   });
+
   calendar.render();
   calendar.on('datesSet',()=>calendar.refetchEvents());
 
-  $('#btnTH').onclick=()=>applyLang('th');$('#btnJP').onclick=()=>applyLang('ja');
+  // รีเฟรชอัตโนมัติทุก 1 นาที
+  autoTimer = setInterval(()=>calendar.refetchEvents(), 60_000);
+
+  // UI control
+  $('#btnTH').onclick=()=>applyLang('th');
+  $('#btnJP').onclick=()=>applyLang('ja');
   applyLang('th');
+
   applyTheme(localStorage.getItem('room_theme')||'dark');
-  $('#btnDark').onclick=()=>applyTheme('dark');$('#btnLight').onclick=()=>applyTheme('light');
+  $('#btnDark').onclick=()=>applyTheme('dark');
+  $('#btnLight').onclick=()=>applyTheme('light');
   $('#btnPing').onclick=async()=>alert('OK: '+(await fetchBookings()).length+' bookings');
+
+  // เปลี่ยนตัวกรองห้อง
+  $('#filterRoom').addEventListener('change', e=>{
+    currentFilter = e.target.value || '';
+    calendar.refetchEvents();
+  });
 });
 
 function applyLang(l){
@@ -274,13 +323,18 @@ function applyLang(l){
   $('#btnTH').classList.toggle('active',l==='th');$('#btnJP').classList.toggle('active',l==='ja');
 }
 
-function buildEv(b){
-  const T=b.map(x=>({
-    id:x.id,title:`${fmtTime(x.start)}-${fmtTime(x.end)} (${x.room})`,
-    start:x.date+'T'+x.start,end:x.date+'T'+x.end,color:'#ef4444'
+function buildEv(rows){
+  const events = rows.map(x=>({
+    id:x.id,
+    title:`${fmtTime(x.start)}-${fmtTime(x.end)} (${x.room})`,
+    start:x.date+'T'+x.start,
+    end:x.date+'T'+x.end,
+    color:'#ef4444'
   }));
-  const U=[...new Set(b.map(x=>x.date))];
-  return T.concat(U.map(d=>({start:d,end:d,allDay:true,display:'background',backgroundColor:'#fee2e2'})));
+
+  const days = [...new Set(rows.map(x=>x.date))];
+  const bg = days.map(d=>({start:d,end:d,allDay:true,display:'background',backgroundColor:'#fee2e2'}));
+  return events.concat(bg);
 }
 
 $('#btnCancel').onclick=()=>closeModal();
@@ -288,22 +342,43 @@ $('#btnCancel').onclick=()=>closeModal();
 $('#bookingForm').onsubmit=async e=>{
   e.preventDefault();
   const f=document.getElementById('formMsg'),
-  t=I18N[currentLang],
-  D=Object.fromEntries(new FormData(e.target).entries());
-  f.className='msg';f.textContent='';
+        t=I18N[currentLang],
+        D=Object.fromEntries(new FormData(e.target).entries());
+  f.className='msg'; f.textContent='';
+
   if (!D.start || !D.end || toMinutes(D.start) >= toMinutes(D.end)) {
-  f.textContent = t.errorEnd; f.classList.add('err'); return;
-}
+    f.textContent = t.errorEnd; f.classList.add('err'); return;
+  }
+
+  // กันซ้ำฝั่งหน้า
   const rows=await fetchBookings();
   if(isConflict(rows,{date:D.date,start:D.start,end:D.end,room:D.room})){
-    f.textContent=t.conflictNow;f.classList.add('err');return
+    f.textContent=t.conflictNow; f.classList.add('err'); return;
   }
+
+  // ส่งฟอร์ม (กันกดซ้ำ)
+  $('#btnSubmit').disabled = true;
+  $('#btnSubmit').textContent = 'กำลังจอง...';
+
   try{
-    await createBooking({requester:D.requester.trim(),company:D.company,date:D.date,start:D.start,end:D.end,room:D.room});
-    f.textContent=t.success;f.classList.add('ok');await calendar.refetchEvents();setTimeout(closeModal,600)
-  }catch(e){f.textContent=t.error+(e.message||'');f.classList.add('err')}
+    await createBooking({
+      requester:D.requester.trim(),
+      company:D.company,
+      date:D.date,
+      start:D.start,
+      end:D.end,
+      room:D.room
+    });
+    f.textContent=t.success; f.classList.add('ok');
+    await calendar.refetchEvents();
+    setTimeout(closeModal, 600);
+  }catch(e){
+    f.textContent=t.error+(e.message||'');
+    f.classList.add('err');
+    $('#btnSubmit').disabled = false;
+    $('#btnSubmit').textContent = t.submit;
+  }
 };
 </script>
-
 </body>
 </html>
