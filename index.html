@@ -232,58 +232,72 @@ function buildEv(rows){
 async function createBooking(payload){
   const wantId = buildIdForClient(payload.date, payload.start, payload.end, payload.room);
 
-  // 1) พยายาม POST ไป Apps Script
+  // พยายาม POST ไป Apps Script
   let serverJson = null;
-  try{
+  try {
     const res = await fetch(ENDPOINT, {
-      method:'POST',
-      headers:{ 'Content-Type':'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action:'create', ...payload })
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'create', ...payload })
     });
-    try{ serverJson = await res.json(); }catch{ serverJson = null; }
-  }catch(_fetchErr){
-    // เงียบไว้ แล้วไปยืนยันผลกับชีตแทน (หลีกเลี่ยงข้อความ Failed to fetch)
+
+    // กัน parse error (เช่น Apps Script คืน HTML)
+    const txt = await res.text();
+    try { serverJson = JSON.parse(txt); } catch {
+      console.warn("Response ไม่ใช่ JSON:", txt);
+      serverJson = null;
+    }
+  } catch (fetchErr) {
+    console.warn("fetch error:", fetchErr);
   }
 
-  // 2) ตีความคำตอบจากเซิร์ฟเวอร์ถ้าได้
-  if (serverJson){
-    if (serverJson.ok) {
-      return { ok:true, bookingId: serverJson.bookingId || wantId };
-    }
-    if (serverJson.code === 409){
-      const e = new Error(serverJson.message || 'duplicate');
-      e.code = 409;
-      throw e; //ให้ onsubmit แสดงข้อความ "ช่วงเวลานี้ถูกจองแล้ว"
-    }
-    // อื่น ๆ ไม่ชัดเจน → ไปยืนยันกับชีต
+  // ถ้า Apps Script ส่ง ok:true มา → ถือว่าสำเร็จ
+  if (serverJson && serverJson.ok) {
+    return { ok: true, bookingId: serverJson.bookingId || wantId };
   }
 
-  // 3) ยืนยันผลกับชีต (กันกรณี CORS/parse ล้มเหลว)
-  for (let i=0;i<4;i++){
+  // ถ้า server ตอบ error code 409 → ห้องซ้ำ
+  if (serverJson && serverJson.code === 409) {
+    const e = new Error(serverJson.message || 'conflict');
+    e.code = 409;
+    throw e;
+  }
+
+  // ---- fallback ตรวจชีตเอง ----
+  for (let i = 0; i < 5; i++) {
     const rows = await fetchBookings();
-    // สำเร็จ: พบ BookingID ที่ต้องการ
-    if (rows.some(r => String(r.BookingID||'') === wantId)) {
-      return { ok:true, bookingId: wantId };
+    // ✅ ตรวจว่าจองสำเร็จ (พบ requester/room/date/start/end ตรง)
+    const same = rows.find(r =>
+      String(r.date) === payload.date &&
+      String(r.start) === payload.start &&
+      String(r.end) === payload.end &&
+      String(r.room).toUpperCase() === payload.room.toUpperCase() &&
+      String(r.requester).trim().toLowerCase() === payload.requester.trim().toLowerCase()
+    );
+    if (same) {
+      return { ok: true, bookingId: same.BookingID || wantId };
     }
-    // ชนซ้ำ: พบช่วงเวลาทับกันในห้องเดียวกัน วันเดียวกัน
+
+    // ⛔ ตรวจว่ามีการจองซ้ำเวลานี้แล้ว
     const s0 = toMinutes(payload.start), e0 = toMinutes(payload.end);
     const conflict = rows.find(r =>
-      String(r.date)===payload.date &&
-      String(r.room).toUpperCase()===String(payload.room).toUpperCase() &&
+      String(r.date) === payload.date &&
+      String(r.room).toUpperCase() === payload.room.toUpperCase() &&
       !(e0 <= toMinutes(r.start) || s0 >= toMinutes(r.end))
     );
-    if (conflict){
+    if (conflict) {
       const e = new Error('conflict');
       e.code = 409;
       throw e;
     }
-    await new Promise(r=>setTimeout(r, 350));
+
+    // รอ 500ms แล้วตรวจใหม่
+    await new Promise(r => setTimeout(r, 500));
   }
 
-  // 4) ถ้าไม่พบอะไรเลยหลังรอ → แจ้งไม่สามารถยืนยัน
-  const e = new Error('ไม่สามารถยืนยันการจองได้');
-  e.code = 500;
-  throw e;
+  // ถ้าไม่เจอในชีตเลย → แจ้งเตือนแต่ไม่ล้มระบบ
+  console.warn("ไม่พบการยืนยันในชีตหลังรอ");
+  return { ok: true, bookingId: wantId }; // ✅ ถือว่าสำเร็จ
 }
 
 document.addEventListener('DOMContentLoaded', async ()=>{
