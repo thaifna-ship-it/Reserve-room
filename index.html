@@ -203,6 +203,16 @@ function fmtTime(t){
     ? h.padStart(2,'0')+':'+m.padStart(2,'0')
     : h.padStart(2,'0')+'.'+m.padStart(2,'0');
 }
+  function buildIdForClient(date, start, end, room){
+  function pad2(n){return String(n).padStart(2,'0');}
+  const [y,m,d] = date.split('-').map(Number);
+  const [sh,sm='0'] = start.split(':').map(Number);
+  const [eh,em='0'] = end.split(':').map(Number);
+  const roomCanon = String(room).toUpperCase().includes('1') ? 'R1'
+                  : String(room).toUpperCase().includes('2') ? 'R2'
+                  : String(room).toUpperCase();
+  return `${pad2(d)}-${pad2(m)}-${y}-${pad2(sh)}-${pad2(sm)}-${pad2(eh)}-${pad2(em)}-${roomCanon}`;
+}
 
 // === FullCalendar event builder
 function buildEv(rows){
@@ -220,35 +230,60 @@ function buildEv(rows){
 
 // === POST create booking
 async function createBooking(payload){
-  // ยิง POST ไป Apps Script
-  const r = await fetch(ENDPOINT, {
-    method:'POST',
-    headers:{ 'Content-Type':'text/plain;charset=utf-8' },
-    body: JSON.stringify({ action:'create', ...payload })
-  });
+  const wantId = buildIdForClient(payload.date, payload.start, payload.end, payload.room);
 
-  // บางครั้ง CORS/parse จะงอแง ให้กันด้วย try/catch
-  let j=null;
-  try{ j = await r.json(); }catch(_){}
-  if (j && j.ok) return j;               // { ok:true, bookingId? }
-  if (j && j.code){                      // เซิร์ฟเวอร์ตอบ error ชัดเจน
-    const e=new Error(j.message||'error'); e.code=j.code; throw e;
+  // 1) พยายาม POST ไป Apps Script
+  let serverJson = null;
+  try{
+    const res = await fetch(ENDPOINT, {
+      method:'POST',
+      headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action:'create', ...payload })
+    });
+    try{ serverJson = await res.json(); }catch{ serverJson = null; }
+  }catch(_fetchErr){
+    // เงียบไว้ แล้วไปยืนยันผลกับชีตแทน (หลีกเลี่ยงข้อความ Failed to fetch)
   }
-  // ถ้าตอบไม่เป็น JSON ให้ fallback ไปตรวจจากชีตว่าบันทึกเข้าแล้วหรือยัง (best-effort)
-  for(let i=0;i<3;i++){
-    const rows=await fetchBookings();
-    const found=rows.find(x =>
-      String(x.date)===payload.date &&
-      String(x.room).toUpperCase()===payload.room.toUpperCase() &&
-      String(x.company)===payload.company &&
-      String(x.requester)===payload.requester &&
-      String(x.start)===payload.start &&
-      String(x.end)===payload.end
+
+  // 2) ตีความคำตอบจากเซิร์ฟเวอร์ถ้าได้
+  if (serverJson){
+    if (serverJson.ok) {
+      return { ok:true, bookingId: serverJson.bookingId || wantId };
+    }
+    if (serverJson.code === 409){
+      const e = new Error(serverJson.message || 'duplicate');
+      e.code = 409;
+      throw e; //ให้ onsubmit แสดงข้อความ "ช่วงเวลานี้ถูกจองแล้ว"
+    }
+    // อื่น ๆ ไม่ชัดเจน → ไปยืนยันกับชีต
+  }
+
+  // 3) ยืนยันผลกับชีต (กันกรณี CORS/parse ล้มเหลว)
+  for (let i=0;i<4;i++){
+    const rows = await fetchBookings();
+    // สำเร็จ: พบ BookingID ที่ต้องการ
+    if (rows.some(r => String(r.BookingID||'') === wantId)) {
+      return { ok:true, bookingId: wantId };
+    }
+    // ชนซ้ำ: พบช่วงเวลาทับกันในห้องเดียวกัน วันเดียวกัน
+    const s0 = toMinutes(payload.start), e0 = toMinutes(payload.end);
+    const conflict = rows.find(r =>
+      String(r.date)===payload.date &&
+      String(r.room).toUpperCase()===String(payload.room).toUpperCase() &&
+      !(e0 <= toMinutes(r.start) || s0 >= toMinutes(r.end))
     );
-    if(found) return { ok:true, bookingId: found.BookingID || null };
-    await new Promise(r=>setTimeout(r,300));
+    if (conflict){
+      const e = new Error('conflict');
+      e.code = 409;
+      throw e;
+    }
+    await new Promise(r=>setTimeout(r, 350));
   }
-  throw new Error('ไม่สามารถยืนยันการจองได้');
+
+  // 4) ถ้าไม่พบอะไรเลยหลังรอ → แจ้งไม่สามารถยืนยัน
+  const e = new Error('ไม่สามารถยืนยันการจองได้');
+  e.code = 500;
+  throw e;
 }
 
 document.addEventListener('DOMContentLoaded', async ()=>{
@@ -340,14 +375,28 @@ document.addEventListener('DOMContentLoaded', async ()=>{
         end:   data.end,     // HH:MM
         room:  data.room     // R1 / R2
       });
-      fmsg.textContent = I18N[currentLang].success; fmsg.classList.add('ok');
-      await calendar.refetchEvents();
-      setTimeout(closeModal, 500);
-    }catch(err){
-      fmsg.textContent = (I18N[currentLang].error || 'Error: ') + (err.message || '');
-      fmsg.classList.add('err');
-      btnSubmit.disabled = false; btnSubmit.textContent = I18N[currentLang].submit;
-    }
+      fmsg.textContent = I18N[currentLang].success;
+fmsg.classList.add('ok');
+await calendar.refetchEvents();
+setTimeout(closeModal, 500);
+    } catch(err){
+  const fmsg = document.getElementById('formMsg');
+  fmsg.className = 'msg';
+
+  if (err && err.code === 409) {
+    // ซ้ำเวลา/ห้อง
+    fmsg.textContent = I18N[currentLang].conflictNow;
+    fmsg.classList.add('err');
+  } else {
+    // กรณีอื่น ๆ (เช่นยืนยันไม่สำเร็จจริง)
+    fmsg.textContent = (I18N[currentLang].error || 'Error: ') + (err.message || '');
+    fmsg.classList.add('err');
+  }
+
+  const btnSubmit = document.getElementById('btnSubmit');
+  btnSubmit.disabled = false;
+  btnSubmit.textContent = I18N[currentLang].submit;
+}
   };
 
   // ภาษาเริ่มต้น
