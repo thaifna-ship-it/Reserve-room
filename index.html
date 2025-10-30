@@ -59,7 +59,7 @@
       <div class="toolbar">
         <h1 id="titleText">ปฏิทินจองห้อง</h1>
         <div class="right-tools">
-          <!-- เปลี่ยนเป็น R1/R2 -->
+          <!-- กรองห้อง (R1/R2) -->
           <select id="filterRoom" class="chip" style="padding:8px 12px">
             <option value="">ทุกห้อง</option>
             <option>R1</option>
@@ -187,6 +187,7 @@ function applyLang(l){
 function openModal(){ $('#modalBackdrop').style.display='flex'; }
 function closeModal(){ $('#modalBackdrop').style.display='none'; }
 
+// === Fetch bookings (GET)
 async function fetchBookings(){
   try{
     const r=await fetch(ENDPOINT+'?action=list&_='+Date.now());
@@ -194,7 +195,8 @@ async function fetchBookings(){
   }catch{return []}
 }
 
-// เวลาแสดงบน title (TH ใช้จุด, JP ใช้โคลอน)
+// === Utilities
+function toMinutes(t){const[a,b='0']=String(t).split(':');return (+a)*60 + (+b)}
 function fmtTime(t){
   const [h,m]=t.split(':');
   return currentLang==='ja'
@@ -202,6 +204,7 @@ function fmtTime(t){
     : h.padStart(2,'0')+'.'+m.padStart(2,'0');
 }
 
+// === FullCalendar event builder
 function buildEv(rows){
   const events = rows.map(x=>({
     id: x.BookingID || x.id || `${x.date}-${x.start}-${x.end}-${x.room}`,
@@ -213,6 +216,39 @@ function buildEv(rows){
   const days=[...new Set(rows.map(x=>x.date))];
   const bg=days.map(d=>({start:d,end:d,allDay:true,display:'background',backgroundColor:'#fee2e2'}));
   return events.concat(bg);
+}
+
+// === POST create booking
+async function createBooking(payload){
+  // ยิง POST ไป Apps Script
+  const r = await fetch(ENDPOINT, {
+    method:'POST',
+    headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+    body: JSON.stringify({ action:'create', ...payload })
+  });
+
+  // บางครั้ง CORS/parse จะงอแง ให้กันด้วย try/catch
+  let j=null;
+  try{ j = await r.json(); }catch(_){}
+  if (j && j.ok) return j;               // { ok:true, bookingId? }
+  if (j && j.code){                      // เซิร์ฟเวอร์ตอบ error ชัดเจน
+    const e=new Error(j.message||'error'); e.code=j.code; throw e;
+  }
+  // ถ้าตอบไม่เป็น JSON ให้ fallback ไปตรวจจากชีตว่าบันทึกเข้าแล้วหรือยัง (best-effort)
+  for(let i=0;i<3;i++){
+    const rows=await fetchBookings();
+    const found=rows.find(x =>
+      String(x.date)===payload.date &&
+      String(x.room).toUpperCase()===payload.room.toUpperCase() &&
+      String(x.company)===payload.company &&
+      String(x.requester)===payload.requester &&
+      String(x.start)===payload.start &&
+      String(x.end)===payload.end
+    );
+    if(found) return { ok:true, bookingId: found.BookingID || null };
+    await new Promise(r=>setTimeout(r,300));
+  }
+  throw new Error('ไม่สามารถยืนยันการจองได้');
 }
 
 document.addEventListener('DOMContentLoaded', async ()=>{
@@ -245,11 +281,10 @@ document.addEventListener('DOMContentLoaded', async ()=>{
       openModal();
       const f=$('#bookingForm');
       f.date.value=i.dateStr;
-      $('#startSel').value='09:00';
-      $('#endSel').value='10:00';
+      $('#startSel').value='10:00';
+      $('#endSel').value='11:00';
       f.requester.focus();
     },
-    // โหลดอีเวนต์จากชีต (รองรับตัวกรองห้อง)
     events: async (_info, success, failure) => {
       try{
         latestRows = await fetchBookings();
@@ -260,7 +295,7 @@ document.addEventListener('DOMContentLoaded', async ()=>{
   });
   calendar.render();
 
-  // ผูกปุ่มยกเลิก + ปิดเมื่อคลิกนอกกล่อง + ปิดด้วย Esc
+  // ปุ่มยกเลิก + ปิดเมื่อคลิกนอกกล่อง + ปิดด้วย Esc
   const cancelBtn = document.getElementById('btnCancel');
   const backdrop  = document.getElementById('modalBackdrop');
   cancelBtn.onclick = () => closeModal();
@@ -277,6 +312,42 @@ document.addEventListener('DOMContentLoaded', async ()=>{
   document.getElementById('btnPing').onclick = async ()=>{
     const rows = await fetchBookings();
     alert('OK: '+rows.length+' bookings');
+  };
+
+  // ====== SUBMIT FORM (สำคัญ) ======
+  document.getElementById('bookingForm').onsubmit = async (e)=>{
+    e.preventDefault();
+    const fmsg = document.getElementById('formMsg');
+    fmsg.className='msg'; fmsg.textContent='';
+    const form = e.target;
+    const data = Object.fromEntries(new FormData(form).entries());
+
+    // validate เบื้องต้น
+    if (!data.start || !data.end || toMinutes(data.start) >= toMinutes(data.end)) {
+      fmsg.textContent = I18N[currentLang].errorEnd; fmsg.classList.add('err'); return;
+    }
+
+    // ปุ่มกันกดซ้ำ
+    const btnSubmit = document.getElementById('btnSubmit');
+    btnSubmit.disabled = true; btnSubmit.textContent = 'กำลังจอง...';
+
+    try{
+      await createBooking({
+        requester: data.requester.trim(),
+        company: data.company,
+        date: data.date,     // yyyy-mm-dd
+        start: data.start,   // HH:MM
+        end:   data.end,     // HH:MM
+        room:  data.room     // R1 / R2
+      });
+      fmsg.textContent = I18N[currentLang].success; fmsg.classList.add('ok');
+      await calendar.refetchEvents();
+      setTimeout(closeModal, 500);
+    }catch(err){
+      fmsg.textContent = (I18N[currentLang].error || 'Error: ') + (err.message || '');
+      fmsg.classList.add('err');
+      btnSubmit.disabled = false; btnSubmit.textContent = I18N[currentLang].submit;
+    }
   };
 
   // ภาษาเริ่มต้น
