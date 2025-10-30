@@ -8,6 +8,7 @@
   <!-- FullCalendar -->
   <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.css" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/locales-all.global.min.js"></script>
 
   <style>
     :root{--bg:#0b1220;--panel:#0f172a;--border:#223047;--fg:#e5e7eb;--muted:#94a3b8;--primary:#22c55e;--danger:#ef4444;--dayred:#fee2e2;--input-bg:#0b1220;--btn-ghost-bg:#0b1220;--shadow:0 6px 20px rgba(0,0,0,.25)}
@@ -313,14 +314,32 @@ document.addEventListener('DOMContentLoaded', async()=>{
 });
 
 function applyLang(l){
-  currentLang=l;const t=I18N[l];
-  $('#titleText').textContent=t.title;$('#legendText').textContent=t.legend;
-  $('#bookingTitle').textContent=t.modalTitle;$('#labelCompany').textContent=t.company;
-  $('#optChooseCompany').textContent=t.chooseCompany;$('#labelRequester').textContent=t.requester;
-  $('#labelDate').textContent=t.date;$('#labelStart').textContent=t.start;$('#labelEnd').textContent=t.end;
-  $('#labelRoom').textContent=t.room;$('#optChooseRoom').textContent=t.chooseRoom;
-  $('#btnCancel').textContent=t.cancel;$('#btnSubmit').textContent=t.submit;
-  $('#btnTH').classList.toggle('active',l==='th');$('#btnJP').classList.toggle('active',l==='ja');
+  currentLang = l;
+  const t = I18N[l];
+
+  // อัปเดตข้อความต่าง ๆ ใน UI
+  $('#titleText').textContent = t.title;
+  $('#legendText').textContent = t.legend;
+  $('#bookingTitle').textContent = t.modalTitle;
+  $('#labelCompany').textContent = t.company;
+  $('#optChooseCompany').textContent = t.chooseCompany;
+  $('#labelRequester').textContent = t.requester;
+  $('#labelDate').textContent = t.date;
+  $('#labelStart').textContent = t.start;
+  $('#labelEnd').textContent = t.end;
+  $('#labelRoom').textContent = t.room;
+  $('#optChooseRoom').textContent = t.chooseRoom;
+  $('#btnCancel').textContent = t.cancel;
+  $('#btnSubmit').textContent = t.submit;
+  $('#btnTH').classList.toggle('active', l==='th');
+  $('#btnJP').classList.toggle('active', l==='ja');
+
+  // **เปลี่ยน locale ของ FullCalendar**
+  if (window.calendar) {
+    calendar.setOption('locale', l === 'ja' ? 'ja' : 'th');
+    calendar.updateSize();       // ให้หัวตาราง/ปุ่ม “วันนี้” เปลี่ยนภาษา
+    calendar.rerenderEvents();   // กรณีมีผลกับการฟอร์แมตเวลาใน title
+  }
 }
 
 function buildEv(rows){
